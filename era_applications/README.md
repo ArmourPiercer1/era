@@ -2,7 +2,7 @@
 
 This directory contains research papers, preprints, and case studies showcasing real-world scientific applications of **Empirical Research Assistance (ERA)**. 
 
-As introduced in our Nature publication, *"AI system designed to help scientists write expert-level empirical software,"* ERA is an AI-powered system designed to write, optimize, and execute software for empirical discovery. By systematically searching scientific literature, writing code, testing solution strategies, combining techniques, and rigorously evaluating outcomes across thousands of potential options, ERA achieves expert-level performance across diverse benchmarks.
+As introduced in  *"AI system designed to help scientists write expert-level empirical software,"* ERA is an AI-powered system designed to write, optimize, and execute software for empirical discovery. By systematically searching scientific literature, writing code, testing solution strategies, combining techniques, and rigorously evaluating outcomes across thousands of potential options, ERA achieves expert-level performance across diverse benchmarks.
 
 Over the past several months, Google Research scientists and collaborative academic institutions have deployed ERA across critical disciplines—demonstrating how AI democratizes expert computational modeling, resolves outstanding theoretical puzzles, and extracts unprecedented utility from observational data.
 
