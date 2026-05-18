@@ -12,8 +12,8 @@ Over the past several months, Google Research scientists and collaborative acade
 
 ### 1. Public Health: Hospitalization Forecasts for Flu, COVID-19, and RSV
 * **Project Title**: Epidemiology Forecasting
-* **External Link**: *Pending arXiv link*
-* **Local PDF**: [Epidemiology_Forecasting.pdf](pdfs/Epidemiology_Forecasting.pdf) *(embargo placeholder)*
+* **External Link**: [arxiv link](https://arxiv.org/abs/2605.16238)
+* **Local PDF**: [Epidemiology_Forecasting.pdf](pdfs/2605.16238v1.pdf)
 
 **Summary**: 
 Following up on the retrospective predictive models established in the foundational ERA study, this effort establishes real-time, prospective weekly hospitalization forecasts across the United States at a state level. Forecasting up to four weeks in advance for influenza, COVID-19, and Respiratory Syncytial Virus (RSV), the ERA-developed models consistently perform at or near the top of public forecasting leaderboards (such as the CDC FluSight and CovidHub prediction hubs). The flexible AI approach demonstrates how state-of-the-art epidemiological forecasting can be rapidly generalized to new infections and broader geographic regions.
@@ -62,8 +62,8 @@ Exploring architectural optimizations for next-generation solar energy harvestin
 
 ### 6. Hydrology: Runoff Forecasting for Snow-Fed River Basins
 * **Project Title**: Runoff Forecasting across California Snow-Fed River Basins
-* **External Link**: *Pending arXiv link*
-* **Local PDF**: [Runoff_Forecasting.pdf](pdfs/Runoff_Forecasting.pdf) *(embargo placeholder)*
+* **External Link**: [arxiv link](https://arxiv.org/abs/2605.16178)
+* **Local PDF**: [Runoff_Forecasting.pdf](pdfs/2605.16178v1.pdf) *(embargo placeholder)*
 
 **Summary**:
 Accurate predictions of spring snowmelt runoff are critical for urban water resource allocation and agricultural planning. Researchers utilized ERA to synthesize a seasonal runoff forecasting model across California's river basins. The generated empirical model produces significantly more precise long-horizon spring runoff forecasts than California's official state baseline outlook (Bulletin 120 / B120).
