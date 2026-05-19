@@ -73,6 +73,13 @@ See [`implementation/notebooks/README.md`](implementation/notebooks/README.md)
 for details.
 
 
+## Applications
+
+For real-world scientific applications of ERA across epidemiology forecasting, neuroscience, theoretical physics, and other domains, see the [`era_applications/`](era_applications/) directory. These span eight papers across public health, climate, hydrology, economics, and combinatorics.
+
+For a broader discussion of ERA's impact, see the [Google Research blog post](https://research.google/blog/empirical-research-assistance-era-from-nature-publication-to-catalyzing-computational-discovery/).
+
+
 ## Citing This Work
 
 If you find this helpful in your work or use the code or data in this package, please cite:
