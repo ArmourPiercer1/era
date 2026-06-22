@@ -22,7 +22,7 @@ import json
 
 
 import futs
-from sandbox import Sandbox
+from sandbox import Sandbox, ExecSandbox
 from llm import GeminiLLM
 
 
@@ -195,7 +195,7 @@ def run_experiment(iterations=10):
     y_val = prepare_data()
 
     llm = GeminiLLM(api_key)
-    sandbox = Sandbox(timeout_seconds=60) # Give it time to train
+    sandbox = ExecSandbox(timeout_seconds=60) # Give it time to train
     
     problem = PlaygroundProblem("Improve the regression model for the California Housing dataset.")
     
