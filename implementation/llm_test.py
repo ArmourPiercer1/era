@@ -160,6 +160,49 @@ class OpenAILLMMockedTest(unittest.TestCase):
     self.assertEqual(result, 'import numpy')
     self.mock_client.chat.completions.create.assert_called_once()
 
+  def test_temperature_top_p_passthrough(self):
+    self.mock_client.chat.completions.create.return_value = (
+        self._make_completion('ok'))
+    llm = self._make_llm(temperature=0.7, top_p=0.9)
+    llm.draw_sample('prompt')
+    kwargs = self.mock_client.chat.completions.create.call_args[1]
+    self.assertEqual(kwargs['temperature'], 0.7)
+    self.assertEqual(kwargs['top_p'], 0.9)
+
+  def test_per_call_temperature_overrides_instance(self):
+    self.mock_client.chat.completions.create.return_value = (
+        self._make_completion('ok'))
+    llm = self._make_llm(temperature=0.2)
+    llm.draw_sample('prompt', temperature=0.9)
+    kwargs = self.mock_client.chat.completions.create.call_args[1]
+    self.assertEqual(kwargs['temperature'], 0.9)
+
+  def test_no_temperature_kwarg_when_unset(self):
+    """Backward compat: no temperature/top_p kwargs by default."""
+    self.mock_client.chat.completions.create.return_value = (
+        self._make_completion('ok'))
+    llm = self._make_llm()
+    llm.draw_sample('prompt')
+    kwargs = self.mock_client.chat.completions.create.call_args[1]
+    self.assertNotIn('temperature', kwargs)
+    self.assertNotIn('top_p', kwargs)
+
+  def test_custom_system_prompt_used(self):
+    self.mock_client.chat.completions.create.return_value = (
+        self._make_completion('ok'))
+    llm = self._make_llm(system_prompt='You are a PDE solver expert.')
+    llm.draw_sample('prompt')
+    messages = self.mock_client.chat.completions.create.call_args[1]['messages']
+    self.assertEqual(messages[0]['content'], 'You are a PDE solver expert.')
+
+  def test_draw_samples_returns_n(self):
+    self.mock_client.chat.completions.create.return_value = (
+        self._make_completion('x = 1'))
+    llm = self._make_llm()
+    out = llm.draw_samples('prompt', n=3)
+    self.assertEqual(out, ['x = 1', 'x = 1', 'x = 1'])
+    self.assertEqual(self.mock_client.chat.completions.create.call_count, 3)
+
   def test_draw_sample_strips_fences(self):
     self.mock_client.chat.completions.create.return_value = (
         self._make_completion('```python\nx = 1\n```'))
@@ -260,6 +303,21 @@ class AnthropicLLMMockedTest(unittest.TestCase):
     result = llm.draw_sample('write a numpy import')
     self.assertEqual(result, 'import numpy')
     self.mock_client.messages.create.assert_called_once()
+
+  def test_temperature_top_p_passthrough(self):
+    self.mock_client.messages.create.return_value = self._make_message('ok')
+    llm = self._make_llm(temperature=0.5, top_p=0.8)
+    llm.draw_sample('prompt')
+    kwargs = self.mock_client.messages.create.call_args[1]
+    self.assertEqual(kwargs['temperature'], 0.5)
+    self.assertEqual(kwargs['top_p'], 0.8)
+
+  def test_custom_system_prompt_used(self):
+    self.mock_client.messages.create.return_value = self._make_message('ok')
+    llm = self._make_llm(system_prompt='PDE expert')
+    llm.draw_sample('prompt')
+    kwargs = self.mock_client.messages.create.call_args[1]
+    self.assertEqual(kwargs['system'], 'PDE expert')
 
   def test_draw_sample_strips_fences(self):
     self.mock_client.messages.create.return_value = (

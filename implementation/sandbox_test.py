@@ -10,7 +10,10 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import sandbox as sandbox_module
-from sandbox import BubblewrapSandbox, ExecSandbox, Sandbox
+from sandbox import (
+    BubblewrapSandbox, ExecSandbox, Sandbox, SandboxResult,
+    median, best, trimmed_mean,
+)
 
 
 class BubblewrapSandboxTest(unittest.TestCase):
@@ -204,6 +207,64 @@ def warn(_):
     self.assertIn('sandbox warning', '\n'.join(logs.output))
 
   # -------------------------------------------------------------------
+  # run_detailed: timing
+  # -------------------------------------------------------------------
+
+  def test_run_detailed_returns_timings(self):
+    """run_detailed records one timing per repeat, all positive."""
+    program = "def f(_):\n    return 7\n"
+    res = self.sandbox.run_detailed(program, 'f', None, repeats=3)
+    self.assertTrue(res.success, msg=f'sandbox failed: {res.error}')
+    self.assertEqual(res.result, 7)
+    self.assertEqual(len(res.timings), 3)
+    self.assertTrue(all(t >= 0 for t in res.timings))
+    self.assertIsNotNone(res.median)
+    self.assertIsNotNone(res.best)
+
+  def test_run_detailed_warmup_not_counted(self):
+    """warmup calls are not included in the measured timings."""
+    program = "def f(_):\n    return 1\n"
+    res = self.sandbox.run_detailed(program, 'f', None, warmup=2, repeats=3)
+    self.assertTrue(res.success, msg=f'sandbox failed: {res.error}')
+    self.assertEqual(len(res.timings), 3)
+
+  def test_run_detailed_default_single_repeat(self):
+    """Default repeats=1 yields exactly one timing (matches run())."""
+    program = "def f(_):\n    return 1\n"
+    res = self.sandbox.run_detailed(program, 'f', None)
+    self.assertTrue(res.success, msg=f'sandbox failed: {res.error}')
+    self.assertEqual(len(res.timings), 1)
+
+  def test_run_detailed_timeout_has_no_timings(self):
+    """A timeout returns success=False with empty timings."""
+    program = """
+def spin(_):
+    import time
+    time.sleep(300)
+    return 'never'
+"""
+    res = self.sandbox.run_detailed(program, 'spin', None, timeout_seconds=2)
+    self.assertFalse(res.success)
+    self.assertEqual(res.timings, [])
+    self.assertIn('timed out', str(res.error).lower())
+
+  def test_run_detailed_exception_has_no_timings(self):
+    """A runtime error returns success=False, traceback captured, no timings."""
+    program = """
+def explode(_):
+    raise ValueError('boom')
+"""
+    res = self.sandbox.run_detailed(program, 'explode', None)
+    self.assertFalse(res.success)
+    self.assertEqual(res.timings, [])
+    self.assertIn('ValueError', str(res.error))
+
+  def test_run_detailed_invalid_function_name(self):
+    res = "def f(_):\n    return 1\n"
+    with self.assertRaises(ValueError):
+      self.sandbox.run_detailed(res, '1bad', None)
+
+  # -------------------------------------------------------------------
   # Isolation checks
   # -------------------------------------------------------------------
 
@@ -294,6 +355,47 @@ class ExecSandboxAliasTest(unittest.TestCase):
   def test_alias_instance(self):
     sb = ExecSandbox(timeout_seconds=5)
     self.assertIsInstance(sb, BubblewrapSandbox)
+
+
+class TimingAggregationTest(unittest.TestCase):
+  """Unit tests (Tier A) for the pure timing-aggregation helpers."""
+
+  def test_median_odd(self):
+    self.assertEqual(median([3.0, 1.0, 2.0]), 2.0)
+
+  def test_median_even(self):
+    self.assertEqual(median([1.0, 2.0, 3.0, 4.0]), 2.5)
+
+  def test_median_empty(self):
+    self.assertIsNone(median([]))
+
+  def test_best(self):
+    self.assertEqual(best([3.0, 1.0, 2.0]), 1.0)
+
+  def test_best_empty(self):
+    self.assertIsNone(best([]))
+
+  def test_trimmed_mean_drops_outliers(self):
+    # 0.2 trim of 10 values drops 2 from each end -> mean of middle 6.
+    values = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 100.0]
+    self.assertAlmostEqual(trimmed_mean(values, trim=0.2), 4.5)
+
+  def test_trimmed_mean_small_list_falls_back(self):
+    self.assertAlmostEqual(trimmed_mean([2.0, 4.0], trim=0.4), 3.0)
+
+  def test_trimmed_mean_empty(self):
+    self.assertIsNone(trimmed_mean([]))
+
+  def test_sandbox_result_properties(self):
+    res = SandboxResult(success=True, result=1, timings=[3.0, 1.0, 2.0])
+    self.assertEqual(res.best, 1.0)
+    self.assertEqual(res.median, 2.0)
+    self.assertEqual(res.elapsed, 2.0)
+
+  def test_sandbox_result_empty_timings(self):
+    res = SandboxResult(success=False, error='x')
+    self.assertIsNone(res.best)
+    self.assertIsNone(res.median)
 
 
 class SandboxInterfaceTest(unittest.TestCase):

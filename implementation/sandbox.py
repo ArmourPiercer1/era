@@ -21,6 +21,7 @@ Uses bubblewrap (bwrap) to create an isolated Linux namespace with:
   - Timeout enforcement
 """
 
+import dataclasses
 import logging
 import os
 import pickle
@@ -30,10 +31,75 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Structured execution result + timing aggregation helpers
+# ---------------------------------------------------------------------------
+
+def median(values: List[float]) -> Optional[float]:
+  """Return the median of *values*, or ``None`` if empty."""
+  if not values:
+    return None
+  ordered = sorted(values)
+  n = len(ordered)
+  mid = n // 2
+  if n % 2 == 1:
+    return ordered[mid]
+  return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def best(values: List[float]) -> Optional[float]:
+  """Return the minimum of *values* (best-case timing), or ``None`` if empty."""
+  return min(values) if values else None
+
+
+def trimmed_mean(values: List[float], trim: float = 0.2) -> Optional[float]:
+  """Return the mean after dropping a *trim* fraction from each end.
+
+  Falls back to the plain mean when trimming would remove everything.
+  """
+  if not values:
+    return None
+  ordered = sorted(values)
+  k = int(len(ordered) * trim)
+  core = ordered[k:len(ordered) - k] or ordered
+  return sum(core) / len(core)
+
+
+@dataclasses.dataclass
+class SandboxResult:
+  """Structured result of a sandboxed execution.
+
+  ``timings`` holds the per-repeat wall-clock seconds of the measured calls
+  (warmup calls excluded).  Aggregations are exposed as properties so a
+  task scoring function can pick median/best as appropriate.
+  """
+
+  success: bool
+  result: Any = None
+  error: Optional[str] = None
+  timings: List[float] = dataclasses.field(default_factory=list)
+  stderr: str = ''
+
+  @property
+  def best(self) -> Optional[float]:
+    """Best-case (minimum) measured runtime in seconds."""
+    return best(self.timings)
+
+  @property
+  def median(self) -> Optional[float]:
+    """Median measured runtime in seconds."""
+    return median(self.timings)
+
+  @property
+  def elapsed(self) -> Optional[float]:
+    """Representative runtime (median) in seconds."""
+    return median(self.timings)
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +188,30 @@ class BubblewrapSandbox(Sandbox):
   ) -> Tuple[Any, bool]:
     """Execute *program* and call *function_to_run* inside the sandbox.
 
+    Thin backward-compatible wrapper over :meth:`run_detailed` that returns
+    only ``(result, success)``.
+
+    Returns:
+        ``(result, True)`` when the function ran successfully, or
+        ``(error_message, False)`` when something went wrong.
+    """
+    res = self.run_detailed(program, function_to_run, test_input,
+                            timeout_seconds)
+    if res.success:
+      return (res.result, True)
+    return (res.error, False)
+
+  def run_detailed(
+      self,
+      program: str,
+      function_to_run: str,
+      test_input: Any = None,
+      timeout_seconds: Optional[int] = None,
+      warmup: int = 0,
+      repeats: int = 1,
+  ) -> SandboxResult:
+    """Execute *program*, call *function_to_run*, and measure its runtime.
+
     Args:
         program: Full Python source code to execute.  Must define the
             function named by *function_to_run*.
@@ -130,10 +220,12 @@ class BubblewrapSandbox(Sandbox):
         test_input: Argument passed to ``function_to_run`` (may be ``None``).
         timeout_seconds: Wall-clock timeout.  Falls back to the instance
             default set in ``__init__``.
+        warmup: Number of unmeasured warmup calls before timing.
+        repeats: Number of measured calls (each timed with ``perf_counter``).
 
     Returns:
-        ``(result, True)`` when the function ran successfully, or
-        ``(error_message, False)`` when something went wrong.
+        A :class:`SandboxResult` with ``result``/``timings`` on success, or
+        ``success=False`` and ``error`` set on failure.
     """
     if not re.match(r'^[a-zA-Z_]\w*$', function_to_run):
       raise ValueError(
@@ -146,7 +238,7 @@ class BubblewrapSandbox(Sandbox):
 
     try:
       runner_path = self._write_runner(program, function_to_run, test_input,
-                                       temp_dir)
+                                       temp_dir, warmup, repeats)
 
       cmd = self._build_bwrap_command(runner_path, temp_dir)
 
@@ -159,10 +251,14 @@ class BubblewrapSandbox(Sandbox):
       return self._parse_result(proc.stdout, proc.stderr)
 
     except subprocess.TimeoutExpired:
-      return (f'Sandbox timed out after {timeout} seconds.', False)
+      return SandboxResult(
+          success=False,
+          error=f'Sandbox timed out after {timeout} seconds.')
     except Exception:  # pylint: disable=broad-except
       import traceback
-      return (f'Sandbox internal error:\n{traceback.format_exc()}', False)
+      return SandboxResult(
+          success=False,
+          error=f'Sandbox internal error:\n{traceback.format_exc()}')
     finally:
       shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -211,16 +307,21 @@ class BubblewrapSandbox(Sandbox):
       function_to_run: str,
       test_input: Any,
       temp_dir: str,
+      warmup: int = 0,
+      repeats: int = 1,
   ) -> str:
     """Write a small runner script into *temp_dir* and return its path.
 
     The runner:
     1. Prevents bytecode writes (venv is mounted read-only).
-    2. Executes *program* so that its definitions become available.
-    3. Calls ``function_to_run(test_input)``.
-    4. Pickles the result (or traceback) to stdout.
+    2. Applies the memory limit.
+    3. Executes *program* so that its definitions become available.
+    4. Runs ``warmup`` unmeasured calls, then ``repeats`` timed calls of
+       ``function_to_run(test_input)`` (each wrapped in ``perf_counter``).
+    5. Pickles ``{success, result, timings}`` (or ``{success, error}``) to
+       stdout.
     """
-    runner_code = f'''import os, pickle, resource, sys, traceback
+    runner_code = f'''import os, pickle, resource, sys, time, traceback
 
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
@@ -230,6 +331,8 @@ resource.setrlimit(resource.RLIMIT_AS, (_memory_limit, _memory_limit))
 _program = {program!r}
 _func_name = {function_to_run!r}
 _test_input = {test_input!r}
+_warmup = {int(warmup)}
+_repeats = {int(repeats)}
 
 try:
     _ns = {{"__builtins__": __builtins__}}
@@ -237,8 +340,17 @@ try:
     _func = _ns.get(_func_name)
     if _func is None:
         raise NameError(f"Function {{_func_name!r}} not defined by program")
-    _result = _func(_test_input)
-    sys.stdout.buffer.write(pickle.dumps({{"success": True, "result": _result}}))
+    for _ in range(max(0, _warmup)):
+        _func(_test_input)
+    _timings = []
+    _result = None
+    for _ in range(max(1, _repeats)):
+        _t0 = time.perf_counter()
+        _result = _func(_test_input)
+        _t1 = time.perf_counter()
+        _timings.append(_t1 - _t0)
+    sys.stdout.buffer.write(pickle.dumps(
+        {{"success": True, "result": _result, "timings": _timings}}))
 except Exception:
     sys.stdout.buffer.write(pickle.dumps({{
         "success": False,
@@ -297,29 +409,43 @@ except Exception:
     return cmd
 
   @staticmethod
-  def _parse_result(stdout: bytes, stderr: bytes) -> Tuple[Any, bool]:
+  def _parse_result(stdout: bytes, stderr: bytes) -> SandboxResult:
     """Deserialise the result dictionary from the sandbox's stdout."""
+    stderr_text = stderr.decode('utf-8', errors='replace').strip()
+
     if not stdout:
-      stderr_text = stderr.decode('utf-8', errors='replace').strip()
       if stderr_text:
-        return (f'Sandbox produced no output on stdout.\nstderr:\n{stderr_text}',
-                False)
-      return ('Sandbox produced no output on stdout and no stderr.', False)
+        return SandboxResult(
+            success=False,
+            error=f'Sandbox produced no output on stdout.\nstderr:\n{stderr_text}',
+            stderr=stderr_text)
+      return SandboxResult(
+          success=False,
+          error='Sandbox produced no output on stdout and no stderr.',
+          stderr=stderr_text)
 
     try:
       data = pickle.loads(stdout)
     except Exception:  # pylint: disable=broad-except
       raw = stdout.decode('utf-8', errors='replace')[:2000]
-      return (f'Failed to unpickle sandbox result. Raw stdout:\n{raw}', False)
+      return SandboxResult(
+          success=False,
+          error=f'Failed to unpickle sandbox result. Raw stdout:\n{raw}',
+          stderr=stderr_text)
 
     success = data.get('success', False)
     if success:
-      stderr_text = stderr.decode('utf-8', errors='replace').strip()
       if stderr_text:
         _LOGGER.warning('Sandbox stderr (run succeeded):\n%s', stderr_text)
-      return (data.get('result'), True)
-    else:
-      return (data.get('error', 'Unknown error inside sandbox'), False)
+      return SandboxResult(
+          success=True,
+          result=data.get('result'),
+          timings=list(data.get('timings') or []),
+          stderr=stderr_text)
+    return SandboxResult(
+        success=False,
+        error=data.get('error', 'Unknown error inside sandbox'),
+        stderr=stderr_text)
 
 
 # ---------------------------------------------------------------------------
